@@ -36,6 +36,7 @@
             'loadstart': channel.create('loadstart'),
             'loadstop' : channel.create('loadstop'),
             'loaderror' : channel.create('loaderror'),
+            'exentriq' : channel.create('exentriq'),
             'exit' : channel.create('exit')
        };
     }

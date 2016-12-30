@@ -19,6 +19,7 @@
 package org.apache.cordova.inappbrowser;
 
 import android.annotation.SuppressLint;
+import org.apache.cordova.inappbrowser.InAppBrowserDialog;
 import android.content.Context;
 import android.content.Intent;
 import android.provider.Browser;
@@ -29,6 +30,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.text.InputType;
+import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.KeyEvent;
@@ -41,9 +43,12 @@ import android.view.inputmethod.InputMethodManager;
 import android.webkit.CookieManager;
 import android.webkit.CookieSyncManager;
 import android.webkit.HttpAuthHandler;
+import android.webkit.ValueCallback;
+import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ImageButton;
 import android.widget.ImageView;
@@ -65,6 +70,9 @@ import org.json.JSONObject;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.net.URLDecoder;
 import java.util.HashMap;
 import java.util.StringTokenizer;
 
@@ -89,7 +97,11 @@ public class InAppBrowser extends CordovaPlugin {
     private static final String SHOULD_PAUSE = "shouldPauseOnSuspend";
     private static final Boolean DEFAULT_HARDWARE_BACK = true;
     private static final String USER_WIDE_VIEW_PORT = "useWideViewPort";
+    private static final int FILECHOOSER_RESULTCODE = 1;
+    private static final int FILECHOOSER_LOLLIPOP_RESULTCODE = 2;
 
+    private ValueCallback<Uri> uploadMessage;
+    private ValueCallback<Uri[]> uploadMessageLollipop;
     private InAppBrowserDialog dialog;
     private WebView inAppWebView;
     private EditText edittext;
@@ -722,7 +734,34 @@ public class InAppBrowser extends CordovaPlugin {
                 inAppWebView = new WebView(cordova.getActivity());
                 inAppWebView.setLayoutParams(new LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
                 inAppWebView.setId(Integer.valueOf(6));
-                inAppWebView.setWebChromeClient(new InAppChromeClient(thatWebView));
+                inAppWebView.setWebChromeClient(new InAppChromeClient(thatWebView){
+                    public void openFileChooser(ValueCallback<Uri> uploadMsg, String acceptType, String capture) {
+                        uploadMessage = uploadMsg;
+                        Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+                        i.addCategory(Intent.CATEGORY_OPENABLE);
+                        i.setType(acceptType);
+                        cordova.startActivityForResult(InAppBrowser.this, Intent.createChooser(i, "File Chooser"), FILECHOOSER_RESULTCODE);
+                    }
+
+                    public void showFileChooser(ValueCallback<String[]> filePathCallback, String acceptType, boolean paramBoolean) {
+                        Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+                        i.addCategory(Intent.CATEGORY_OPENABLE);
+                        i.setType(acceptType);
+                        cordova.startActivityForResult(InAppBrowser.this, Intent.createChooser(i, "File Chooser"), FILECHOOSER_RESULTCODE);
+                    }
+
+                    // For Android 5.0+
+                    public boolean onShowFileChooser(
+                            WebView webView, ValueCallback<Uri[]> filePathCallback,
+                            WebChromeClient.FileChooserParams fileChooserParams) {
+                        uploadMessageLollipop = filePathCallback;
+                        Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+                        i.addCategory(Intent.CATEGORY_OPENABLE);
+                        i.setType("image/*");
+                        cordova.startActivityForResult(InAppBrowser.this, Intent.createChooser(i, "File Chooser"), FILECHOOSER_LOLLIPOP_RESULTCODE);
+                        return true;
+                    }
+                });
                 WebViewClient client = new InAppBrowserClient(thatWebView, edittext);
                 inAppWebView.setWebViewClient(client);
                 WebSettings settings = inAppWebView.getSettings();
@@ -831,6 +870,21 @@ public class InAppBrowser extends CordovaPlugin {
         }
     }
 
+    public void onActivityResult(int requestCode, int resultCode, Intent intent) {
+        if (requestCode == FILECHOOSER_RESULTCODE) {
+            if (null == uploadMessage) return;
+            Uri result = intent == null || resultCode != cordova.getActivity().RESULT_OK ? null : intent.getData();
+            uploadMessage.onReceiveValue(result);
+            uploadMessage = null;
+        } else if (requestCode == FILECHOOSER_LOLLIPOP_RESULTCODE) {
+            if (uploadMessageLollipop == null) return;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                uploadMessageLollipop.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(resultCode, intent));
+            }
+            uploadMessageLollipop = null;
+        }
+    }
+
     /**
      * The webview client receives notifications about appView
      */
@@ -859,7 +913,20 @@ public class InAppBrowser extends CordovaPlugin {
          */
         @Override
         public boolean shouldOverrideUrlLoading(WebView webView, String url) {
-            if (url.startsWith(WebView.SCHEME_TEL)) {
+            if (url.startsWith("exentriq:")) {
+                try {
+                    JSONObject obj = new JSONObject();
+                    obj.put("type", "exentriq");
+                    obj.put("data", new JSONObject(Uri.decode(url).replace("exentriq://","")));
+                    sendUpdate(obj, true);
+                    return true;
+                } catch (JSONException ex) {
+                    Log.d(LOG_TAG, "Should never happen");
+                    ex.printStackTrace();
+                    return true;
+                }
+            }
+            else if (url.startsWith(WebView.SCHEME_TEL)) {
                 try {
                     Intent intent = new Intent(Intent.ACTION_DIAL);
                     intent.setData(Uri.parse(url));

@@ -401,9 +401,23 @@
     NSURL* url = request.URL;
     BOOL isTopLevelNavigation = [request.URL isEqual:[request mainDocumentURL]];
 
+    if ([[url scheme] isEqualToString:@"exentriq"]){
+        NSString* obj = [[url absoluteString] stringByReplacingOccurrencesOfString:@"exentriq://" withString:@"" ];
+        obj = [obj stringByReplacingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
+        NSError* __autoreleasing error = nil;
+        NSData* data = [NSJSONSerialization JSONObjectWithData:[obj dataUsingEncoding:NSUTF8StringEncoding] options:kNilOptions error:&error];
+        if (self.callbackId != nil) {
+            CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK
+                                                      messageAsDictionary:@{@"type":@"exentriq", @"data":data}];
+            [pluginResult setKeepCallback:[NSNumber numberWithBool:YES]];
+
+            [self.commandDelegate sendPluginResult:pluginResult callbackId:self.callbackId];
+        }
+        return NO;
+    }
     // See if the url uses the 'gap-iab' protocol. If so, the host should be the id of a callback to execute,
     // and the path, if present, should be a JSON-encoded value to pass to the callback.
-    if ([[url scheme] isEqualToString:@"gap-iab"]) {
+    else if ([[url scheme] isEqualToString:@"gap-iab"]) {
         NSString* scriptCallbackId = [url host];
         CDVPluginResult* pluginResult = nil;
 
